@@ -1,105 +1,128 @@
 # luci-app-scut-autologin
 
-华南理工大学校园网（Dr.COM/ePortal Web 认证）自动登录插件，适用于
-ImmortalWrt 无线中继场景：路由器通过中继上游 Wi-Fi 上网，掉线（认证过期、
-被踢下线）后自动重新认证。
+华南理工大学校园网自动登录插件，适用于使用 ImmortalWrt 进行无线中继的
+路由器。插件通过 LuCI 配置 Dr.COM/ePortal Web 认证信息，在认证过期或掉线
+后自动重新登录。
 
-## 工作原理
+## 功能
 
-后台守护进程 `/usr/bin/scut-autologin.sh` 每隔 N 秒（默认 30s）请求一次
-检测地址（默认小米的 `generate_204` 探测接口）：
+- 定时检测外网连通性，并识别认证网关的重定向
+- 掉线后自动查询门户状态并执行登录
+- 支持校园用户、电信、联通和移动账号后缀
+- LuCI 页面显示认证状态和当前 IP，每 10 秒刷新
+- 使用 procd 守护进程，支持开机启动和异常拉起
 
-- 返回 HTTP 204，且最终 URL 没有被劫持跳到认证服务器 → 已联网；
-- 被重定向到认证页 / 超时 → 未认证，请求认证服务器 `/drcom/chkstatus`
-  读取本机 IP 和在线状态，然后向 `/drcom/login` 带账号密码发起 JSONP
-  GET 登录，失败会重试一次。
+## 工作方式
 
-> 关键点：不能用"有 HTTP 响应就算联网"来判断——未认证时任何 HTTP 请求
-> 都会被网关 302 到认证页并返回 200，所以脚本同时校验 `url_effective`
-> 是否落在 `portal_host` 上。
+`/usr/bin/scut-autologin.sh` 默认每 30 秒执行一次检测：
 
-协议是从认证页前端 JS（`reference/a40.js`、`reference/a41.js`）逆向的：
+1. 请求 `check_host`，仅当返回 HTTP 204 或其他 2xx 且最终 URL 未跳转到
+   `portal_host` 时判定为已联网。
+2. 未联网时请求 `/drcom/chkstatus`，读取门户返回的在线状态和本机 IP。
+3. 确认离线后请求 `:802/eportal/portal/login`（HTTP 认证服务器使用 `:801`）。
+4. 登录先尝试明文密码，失败后再尝试门户使用的 `en_md5` 格式。
 
-```
-GET  {portal}/drcom/chkstatus?callback=dr1002
-  -> jsonp: dr1002({"result":0,"v46ip":"10.195.50.53","ss4":"...",...})
-     result: 0 = 离线, 1 = 在线; v46ip = 本机 IP
+无线中继场景下，未配置运营商后缀时，脚本会读取默认路由接口的 MAC 地址，
+将账号组装为 `<账号>@wifi<小写 MAC（去掉冒号）>`。配置了后缀后则直接追加
+该后缀，例如 `<账号>@dx`。
 
-GET  {portal}/drcom/login?DDDDD=<账号>&upass=<密码>&0MKKey=123456
-     &R1=&R2=&R3=2&R6=0&para=00&v6ip=&callback=dr1002
-  -> jsonp: {"result":1} 表示成功
-```
+## 要求
 
-配置存于 `/etc/config/scut-autologin`，守护进程每个周期重新读取，LuCI
-点"保存并应用"后下个周期即生效，无需重启服务。
+- ImmortalWrt/OpenWrt，且使用支持 Lua 的 LuCI
+- `curl`
+- `jsonfilter`
+- 可访问华南理工大学认证门户
 
-## LuCI 页面
-
-菜单位置：`服务 → 校园网自动登录`
-
-- 启用开关
-- 账号 / 密码
-- 检测间隔（秒）
-- 检测地址 / 认证服务器 / 运营商（R3）/ 请求超时（高级）
-- 当前状态：实时显示"已联网（IP）/ 未认证 / 无法访问认证服务器"，10s 自动刷新
-
-## 安装
-
-把整个 `luci-app-scut-autologin` 目录放进 ImmortalWrt 源码树的
-`feeds/luci/applications/`（旧版 Lua LuCI）：
+`curl` 和 `jsonfilter` 通常已经包含在固件中。缺少时可在路由器上安装：
 
 ```sh
-# 在 buildroot 根目录
+opkg update
+opkg install curl jsonfilter
+```
+
+## 编译安装
+
+将仓库目录放入 ImmortalWrt 源码树的 `feeds/luci/applications/`：
+
+```sh
 cp -r /path/to/luci-app-scut-autologin feeds/luci/applications/
-./scripts/feeds update luci   # 仅当之前没装过 luci feed
-./scripts/feeds install -a -p luci   # 可选
-make menuconfig  # LuCI -> Applications -> luci-app-scut-autologin 选 <M>
+./scripts/feeds update luci
+./scripts/feeds install -a -p luci
+make menuconfig
+```
+
+在 `LuCI -> Applications` 中选择 `luci-app-scut-autologin`（建议编译为 `<M>`），
+然后编译：
+
+```sh
 make package/feeds/luci/luci-app-scut-autologin/compile V=s
 ```
 
-生成的 ipk 在 `bin/packages/<arch>/`，传到路由器：
+生成的 ipk 通常位于 `bin/packages/<架构>/`。将其上传到路由器后安装并启动：
 
 ```sh
 opkg install luci-app-scut-autologin_*.ipk
-/etc/init.d/scut-autologin enable
+在 `LuCI -> Applications` 中选择 `luci-app-scut-autologin`（建议编译为 `<M>`），
 /etc/init.d/scut-autologin start
 ```
 
-依赖：`curl`、`jsonfilter`（固件一般自带；没有则 `opkg install curl`）。
+安装后进入 `服务 -> 校园网自动登录`，填写账号和密码，勾选启用并点击保存应用。
+服务会在下一个检测周期重新读取配置，无需重启。
 
-## 配置项（/etc/config/scut-autologin）
+## 配置
 
-| 项 | 说明 | 默认 |
-|---|---|---|
-| `enabled` | 1 启用 / 0 停用 | 0 |
-| `username` | 认证账号 | 空 |
-| `password` | 认证密码 | 空 |
-| `interval` | 检测间隔（秒），最小 5 | 30 |
-| `check_host` | 连通性检测 URL（推荐 204 接口） | `http://connect.rom.miui.com/generate_204` |
-| `portal_host` | 认证服务器地址 | `https://s.scut.edu.cn` |
-| `suffix` | 运营商账号后缀：空=校园用户，`@dx`=电信，`@lt`=联通 | 空 |
-| `timeout` | HTTP 超时（秒） | 5 |
+配置文件：`/etc/config/scut-autologin`
 
-## 手动调试
+| 选项 | 说明 | 默认值 |
+| --- | --- | --- |
+| `enabled` | 是否启用，`1` 启用，`0` 停用 | `0` |
+| `username` | 校园网账号（学号或工号） | 空 |
+| `password` | 校园网密码 | 空 |
+| `interval` | 检测间隔，最小 5 秒 | `30` |
+| `check_host` | 连通性检测 URL，建议使用 204 接口 | `http://connect.rom.miui.com/generate_204` |
+| `portal_host` | 认证门户主机地址，不带路径 | `https://s.scut.edu.cn` |
+| `suffix` | 账号后缀：空、`@dx`、`@lt` 或 `@yd` | 空 |
+| `timeout` | HTTP 请求超时时间，1 至 60 秒 | `5` |
+
+也可以直接编辑 UCI 配置：
 
 ```sh
-# 看日志
-logread | grep scut-autologin
+uci set scut-autologin.main.enabled='1'
+uci set scut-autologin.main.username='你的账号'
+uci set scut-autologin.main.password='你的密码'
+uci commit scut-autologin
+```
 
-# 手动跑一次检测+登录（前台）
-/usr/bin/scut-autologin.sh &   # 注意脚本是死循环，用 kill 结束
+## 查看状态与日志
 
-# 直接测认证服务器是否可达
+```sh
+# 查看服务状态
+/etc/init.d/scut-autologin status
+
+# 查看插件日志
+logread -e scut-autologin
+
+# 直接检查认证门户
 curl -s 'https://s.scut.edu.cn/drcom/chkstatus?callback=dr1002'
+```
+
+脚本是持续运行的守护进程，不建议手动重复启动。需要临时停止时使用：
+
+```sh
+/etc/init.d/scut-autologin stop
 ```
 
 ## 注意事项
 
-- 认证服务器域名是固定的；URL 里 `wlanacip=172.18.50.11` 是 AC 参数，
-  不需要配置。
-- 运营商不是通过 R3 参数，而是账号后缀：认证页配置（a79.htm 的
-  `carrier` 字段）为 校园用户=`""`、电信=`@dx`、联通=`@lt`。插件把
-  后缀直接拼在账号后面发送，LuCI 页面上选择即可。若你办理的是移动，
-  先抓包确认后缀再填。
-- 密码明文存 UCI（`/etc/config/scut-autologin`），与其他校园网插件一致。
-- 本插件只处理 Web 认证，不影响 802.1X 客户端认证。
+- 密码以明文保存在 `/etc/config/scut-autologin`，请限制路由器管理权限。
+- 插件只负责 Web 认证，不负责 802.1X、宽带拨号或上游 Wi-Fi 关联。
+- `portal_host` 默认值针对当前校园门户；如果学校门户地址或协议发生变化，
+  需要同步调整该配置和登录协议。
+- 运营商后缀由门户规则决定。移动用户应先确认门户实际要求的后缀，再选择
+  `@yd` 或手动修改配置。
+- 不同校区、网络出口或门户版本可能要求不同的账号格式，登录失败时请先查看
+  日志，并确认默认路由接口的 MAC 地址和门户地址正确。
+
+## 许可证
+
+本项目采用 [MIT License](https://opensource.org/license/mit/)。
