@@ -9,7 +9,7 @@ function index()
 	end
 
 	entry({"admin", "services", "scut-autologin"},
-		cbi("scut-autologin"), _("校园网自动登录"), 60).dependent = true
+		cbi("scut-autologin"), _("SCUT 校园网自动登录"), 60).dependent = true
 
 	-- status endpoint: LuCI page polls this to show online state
 	entry({"admin", "services", "scut-autologin", "status"},

@@ -4,7 +4,7 @@
 local m, s, o
 local uci = require "luci.model.uci".cursor()
 
-m = Map("scut-autologin", translate("校园网自动登录"),
+m = Map("scut-autologin", translate("SCUT 校园网自动登录"),
 	translate("校园网无线中继下的自动认证（Dr.COM/ePortal）。" ..
 		"按设定间隔检测连通性，掉线时自动重新登录。"))
 
