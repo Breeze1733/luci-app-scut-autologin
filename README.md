@@ -14,12 +14,13 @@
 
 ## 工作方式
 
-`/usr/bin/scut-autologin.sh` 默认每 30 秒执行一次检测：
+守护进程 `/usr/bin/scut-autologin.sh` 默认每 30 秒执行一次检测：
 
 1. 请求 `check_host`，仅当返回 HTTP 204 或其他 2xx 且最终 URL 未跳转到
    `portal_host` 时判定为已联网。
 2. 未联网时请求 `/drcom/chkstatus`，读取门户返回的在线状态和本机 IP。
-3. 确认离线后请求 `:802/eportal/portal/login`（HTTP 认证服务器使用 `:801`）。
+3. 确认离线后调用登录模块 `/usr/lib/scut-autologin/login.sh`，请求
+   `:802/eportal/portal/login`（HTTP 认证服务器使用 `:801`）。
 4. 登录先尝试明文密码，失败后再尝试门户使用的 `en_md5` 格式。
 
 无线中继场景下，未配置运营商后缀时，脚本会读取默认路由接口的 MAC 地址，

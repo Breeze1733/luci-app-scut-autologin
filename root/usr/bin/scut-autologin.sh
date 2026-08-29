@@ -1,26 +1,9 @@
 #!/bin/sh
 # /usr/bin/scut-autologin.sh
-# SCUT campus network auto-login (Dr.COM/ePortal web auth).
+# SCUT campus network auto-login daemon: detection and keep-alive loop.
 #
-# Protocol reverse-engineered from the portal page JS (reference/a40.js, a41.js)
-# and verified live against s.scut.edu.cn:
-#
-#   GET {portal}/drcom/chkstatus?callback=drXXXX
-#     -> drXXXX({"result":0|1,"v46ip":"x.x.x.x","uid":"..."})
-#        result: 0 = offline (need login), 1 = online
-#
-#   GET {portal}:802/eportal/portal/login (JSONP)
-#     callback=drXXXX&login_method=1&user_account=<acct>&user_password=<pass>
-#     &wlan_user_ip=<ip>&wlan_user_mac=000000000000&jsVersion=4.1.3
-#     &terminal_type=1&lang=zh-cn&mac_type=0
-#     -> {"result":1} on success
-#
-#   IMPORTANT: the wireless portal binds the session to the relay interface
-#   MAC. A working login uses  user_account = "<user>@wifi<machex>"  where
-#   machex is the MAC (no colons) of the interface holding the default route.
-#   When offline the plain account is rejected with msg 512.
-#
-#   The old kernel endpoint /drcom/login returns 404 on this portal.
+# The login protocol itself lives in /usr/lib/scut-autologin/login.sh,
+# which is sourced below.
 #
 # Config (UCI /etc/config/scut-autologin):
 #   main.{enabled,username,password,interval,check_host,portal_host,suffix,timeout}
@@ -30,6 +13,7 @@
 CFG=scut-autologin
 LOGTAG=scut-autologin
 PIDFILE=/var/run/scut-autologin.pid
+LOGIN_MODULE=/usr/lib/scut-autologin/login.sh
 
 log() {
 	logger -t "$LOGTAG" -s "$1"
@@ -82,112 +66,10 @@ get_status() {
 	echo "${result:-} ${ip:-}"
 }
 
-# ---- helpers ------------------------------------------------------------
-
-# MAC (no colons, lowercase) of the interface holding the default route
-wan_iface_mac() {
-	local dev
-	dev=$(ip route show default 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="dev"){print $(i+1); exit}}')
-	[ -n "$dev" ] || return 1
-	tr -d ':' < "/sys/class/net/$dev/address" 2>/dev/null | tr 'A-F' 'a-f'
-}
-
-# The wireless portal binds the login to "user@wifi<machex>"; honour an
-# explicit suffix (e.g. @dx/@lt for ISP plans) if the user configured one.
-build_account() {
-	local acct="$1"
-	if [ -n "$suffix" ]; then
-		printf '%s%s' "$acct" "$suffix"
-		return
-	fi
-	local mac
-	mac=$(wan_iface_mac)
-	if [ -n "$mac" ]; then
-		printf '%s@wifi%s' "$acct" "$mac"
-	else
-		printf '%s' "$acct"
-	fi
-}
-
-# en_md5 transform from the portal JS: md5(PID+pass+CALG) + CALG + PID
-# with PID='1' and CALG='12345678'
-md5_password() {
-	printf '%s' "1$1""12345678" | md5sum | awk '{print $1 "123456781"}'
-}
-
-json_result() {
-	local resp=${1#*(}
-	resp=${resp%)*}
-	jsonfilter -s "$resp" -e '@.result' 2>/dev/null
-}
-
-# ---- login --------------------------------------------------------------
-do_login() {
-	local ip="$1"
-	local acct mac wmac
-	acct=$(build_account "$username")
-	mac=$(wan_iface_mac)
-	wmac=$(printf '%s' "$mac" | tr 'a-f' 'A-F')
-	[ -n "$wmac" ] || wmac="000000000000"
-
-	local epbase
-	case "$portal_host" in
-		http://*)  epbase="$portal_host:801" ;;
-		*)         epbase="$portal_host:802" ;;
-	esac
-
-	local resp ret
-	# attempt 1: plaintext password
-	resp=$(curl -s -m "$timeout" -G \
-		-H "Referer: $portal_host/" \
-		-H "User-Agent: Mozilla/5.0" \
-		--data-urlencode "callback=dr1002" \
-		--data-urlencode "login_method=1" \
-		--data-urlencode "user_account=$acct" \
-		--data-urlencode "user_password=$password" \
-		--data-urlencode "wlan_user_ip=$ip" \
-		--data-urlencode "wlan_user_ipv6=" \
-		--data-urlencode "wlan_user_mac=$wmac" \
-		--data-urlencode "wlan_ac_ip=$ac_ip" \
-		--data-urlencode "wlan_ac_name=" \
-		--data-urlencode "jsVersion=4.1.3" \
-		--data-urlencode "terminal_type=1" \
-		--data-urlencode "lang=zh-cn" \
-		--data-urlencode "mac_type=0" \
-		"$epbase/eportal/portal/login" 2>/dev/null)
-	ret=$(json_result "$resp")
-	log "login attempt plain (account=$acct, ip=$ip): result=$ret"
-	[ "$ret" = "1" ] && { log "login ok"; return 0; }
-
-	# attempt 2: en_md5-transformed password
-	local pass2
-	pass2=$(md5_password "$password")
-	resp=$(curl -s -m "$timeout" -G \
-		-H "Referer: $portal_host/" \
-		-H "User-Agent: Mozilla/5.0" \
-		--data-urlencode "callback=dr1002" \
-		--data-urlencode "login_method=1" \
-		--data-urlencode "user_account=$acct" \
-		--data-urlencode "user_password=$pass2" \
-		--data-urlencode "wlan_user_ip=$ip" \
-		--data-urlencode "wlan_user_ipv6=" \
-		--data-urlencode "wlan_user_mac=$wmac" \
-		--data-urlencode "wlan_ac_ip=$ac_ip" \
-		--data-urlencode "wlan_ac_name=" \
-		--data-urlencode "jsVersion=4.1.3" \
-		--data-urlencode "terminal_type=1" \
-		--data-urlencode "lang=zh-cn" \
-		--data-urlencode "mac_type=0" \
-		"$epbase/eportal/portal/login" 2>/dev/null)
-	ret=$(json_result "$resp")
-	log "login attempt md5: result=$ret"
-	[ "$ret" = "1" ] && { log "login ok (md5 password)"; return 0; }
-
-	log "login failed: $(printf '%s' "$resp" | cut -c1-160)"
-	return 1
-}
-
 # ---- main loop ----------------------------------------------------------
+[ -f "$LOGIN_MODULE" ] || log "login module missing: $LOGIN_MODULE"
+. "$LOGIN_MODULE"
+
 echo $$ > "$PIDFILE"
 
 while :; do
