@@ -6,7 +6,7 @@
 # which is sourced below.
 #
 # Config (UCI /etc/config/scut-autologin):
-#   main.{enabled,username,password,interval,check_host,portal_host,suffix,timeout}
+#   main.{enabled,username,password,interval,check_host,portal_host,ac_ip,timeout}
 
 . /lib/functions.sh
 
@@ -27,7 +27,6 @@ load_config() {
 	config_get interval    main interval    "30"
 	config_get check_host  main check_host  "http://connect.rom.miui.com/generate_204"
 	config_get portal_host main portal_host "https://s.scut.edu.cn"
-	config_get suffix      main suffix      ""
 	config_get ac_ip       main ac_ip       ""
 	config_get timeout     main timeout     "5"
 }

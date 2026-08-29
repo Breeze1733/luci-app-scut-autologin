@@ -20,8 +20,14 @@
    `portal_host` 时判定为已联网。
 2. 未联网时请求 `/drcom/chkstatus`，读取门户返回的在线状态和本机 IP。
 3. 确认离线后调用登录模块 `/usr/lib/scut-autologin/login.sh`，请求
-   `:802/eportal/portal/login`（HTTP 认证服务器使用 `:801`）。
-4. 登录先尝试明文密码，失败后再尝试门户使用的 `en_md5` 格式。
+   `:802/eportal/portal/login`。AC 地址自动从门户重定向中检测
+   （也可在配置中手动指定 `ac_ip`）。
+4. 登录使用明文密码（当前门户配置 `en_md5=0`，无需密码变换）。
+
+校园账号直接使用学号本身，无需拼接 `@wifi<MAC>` 后缀——门户在服务端
+绑定客户端 MAC（`chkstatus` 返回的 `olmac` 字段）。运营商账号如需
+后缀（如 `@dx`），可通过 UCI 的 `ac_ip` 之外的接口手动处理或修改脚本
+中的 `build_account`。
 
 无线中继场景下，未配置运营商后缀时，脚本会读取默认路由接口的 MAC 地址，
 将账号组装为 `<账号>@wifi<小写 MAC（去掉冒号）>`。配置了后缀后则直接追加
@@ -82,7 +88,7 @@ opkg install luci-app-scut-autologin_*.ipk
 | `interval` | 检测间隔，最小 5 秒 | `30` |
 | `check_host` | 连通性检测 URL，建议使用 204 接口 | `http://connect.rom.miui.com/generate_204` |
 | `portal_host` | 认证门户主机地址，不带路径 | `https://s.scut.edu.cn` |
-| `suffix` | 账号后缀：空、`@dx`、`@lt` 或 `@yd` | 空 |
+| `ac_ip` | 认证控制器 IP；留空则登录前自动检测 | 自动检测 |
 | `timeout` | HTTP 请求超时时间，1 至 60 秒 | `5` |
 
 也可以直接编辑 UCI 配置：

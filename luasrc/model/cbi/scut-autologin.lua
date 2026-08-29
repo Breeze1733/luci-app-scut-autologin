@@ -48,14 +48,11 @@ o.rmempty = false
 o.default = "https://s.scut.edu.cn"
 o.description = translate("校园网认证页地址（仅主机部分，不带路径）。一般是固定的 https://s.scut.edu.cn，无需修改。")
 
--- 账号后缀（运营商）
-o = s:option(ListValue, "suffix", translate("运营商"))
-o:value("", translate("校园用户（默认）"))
-o:value("@dx", translate("校园电信"))
-o:value("@lt", translate("校园联通"))
-o:value("@yd", translate("校园移动"))
-o.default = ""
+-- 认证控制器地址（可选，通常自动检测）
+o = s:option(Value, "ac_ip", translate("AC 地址（可选）"))
 o.rmempty = true
+o.placeholder = "自动检测"
+o.description = translate("校园网认证控制器的 IP 地址。留空时登录前会自动从门户重定向中检测；只有自动检测失败时才需要手动填写。")
 
 -- 超时
 o = s:option(Value, "timeout", translate("请求超时（秒）"))
